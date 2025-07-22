@@ -23,10 +23,10 @@ contract PlantSentience {
     // Struct to store plant health metrics
     struct PlantHealth {
         uint256 soilMoisture;     // Percentage (0-100)
-        uint256 temperature;      // Celsius * 100 (for precision)
+        uint256 temperature;      // Celsius * 100
         uint256 lightIntensity;   // Lux
         uint256 humidity;         // Percentage (0-100)
-        uint256 phLevel;          // pH * 100 (for precision)
+        uint256 phLevel;          // pH * 100
         uint256 timestamp;
     }
     
@@ -59,27 +59,19 @@ contract PlantSentience {
     }
     
     modifier plantExists(uint256 _plantId) {
-        require(plants[_plantId].id != 0, "Plant does not exist");
+        require(plants[_plantId].id != 0 || _plantId == 0, "Plant does not exist");
         _;
     }
-    
+
     modifier validHealthData(PlantHealth memory _health) {
         require(_health.soilMoisture <= 100, "Invalid soil moisture");
         require(_health.humidity <= 100, "Invalid humidity");
-        require(_health.phLevel >= 400 && _health.phLevel <= 1000, "Invalid pH level"); // pH 4.0 to 10.0
+        require(_health.phLevel >= 400 && _health.phLevel <= 1000, "Invalid pH level");
         _;
     }
     
-    /**
-     * @dev Register a new plant in the system
-     * @param _name Name of the plant
-     * @param _species Species of the plant
-     * @return plantId The ID of the newly registered plant
-     */
-    function registerPlant(
-        string memory _name,
-        string memory _species
-    ) external returns (uint256) {
+    // Register a new plant
+    function registerPlant(string memory _name, string memory _species) external returns (uint256) {
         require(bytes(_name).length > 0, "Plant name cannot be empty");
         require(bytes(_species).length > 0, "Plant species cannot be empty");
         
@@ -102,16 +94,8 @@ contract PlantSentience {
         emit PlantRegistered(plantId, _name, msg.sender);
         return plantId;
     }
-    
-    /**
-     * @dev Update plant health data from IoT sensors
-     * @param _plantId ID of the plant
-     * @param _soilMoisture Soil moisture percentage
-     * @param _temperature Temperature in Celsius * 100
-     * @param _lightIntensity Light intensity in Lux
-     * @param _humidity Humidity percentage
-     * @param _phLevel pH level * 100
-     */
+
+    // Update health data
     function updatePlantHealth(
         uint256 _plantId,
         uint256 _soilMoisture,
@@ -130,57 +114,43 @@ contract PlantSentience {
             timestamp: block.timestamp
         });
         
-        // Validate health data
         require(newHealth.soilMoisture <= 100, "Invalid soil moisture");
         require(newHealth.humidity <= 100, "Invalid humidity");
         require(newHealth.phLevel >= 400 && newHealth.phLevel <= 1000, "Invalid pH level");
         
-        // Update current health
         plants[_plantId].currentHealth = newHealth;
         plants[_plantId].lastUpdateTime = block.timestamp;
-        
-        // Store in history
         healthHistory[_plantId].push(newHealth);
         
-        // Check for alerts
         _checkHealthAlerts(_plantId, newHealth);
         
         emit HealthDataUpdated(_plantId, block.timestamp);
     }
-    
-    /**
-     * @dev Get comprehensive plant analytics and health score
-     * @param _plantId ID of the plant
-     * @return healthScore Overall health score (0-100)
-     * @return totalReadings Total number of health readings
-     * @return avgSoilMoisture Average soil moisture over last 7 days
-     * @return avgTemperature Average temperature over last 7 days
-     * @return daysActive Number of days since registration
-     */
-    function getPlantAnalytics(uint256 _plantId) 
-        external 
-        view 
-        plantExists(_plantId) 
+
+    // Get analytics
+    function getPlantAnalytics(uint256 _plantId)
+        external
+        view
+        plantExists(_plantId)
         returns (
             uint256 healthScore,
             uint256 totalReadings,
             uint256 avgSoilMoisture,
             uint256 avgTemperature,
             uint256 daysActive
-        ) 
+        )
     {
         Plant memory plant = plants[_plantId];
         PlantHealth[] memory history = healthHistory[_plantId];
         
         totalReadings = history.length;
-        daysActive = (block.timestamp - plant.registrationTime) / 86400; // Convert to days
-        
+        daysActive = (block.timestamp - plant.registrationTime) / 86400;
+
         if (totalReadings == 0) {
             return (0, 0, 0, 0, daysActive);
         }
-        
-        // Calculate averages for last 7 days
-        uint256 weekAgo = block.timestamp - 604800; // 7 days in seconds
+
+        uint256 weekAgo = block.timestamp - 604800;
         uint256 recentReadings = 0;
         uint256 totalMoisture = 0;
         uint256 totalTemp = 0;
@@ -192,98 +162,97 @@ contract PlantSentience {
                 recentReadings++;
             }
         }
-        
+
         if (recentReadings > 0) {
             avgSoilMoisture = totalMoisture / recentReadings;
             avgTemperature = totalTemp / recentReadings;
         }
-        
-        // Calculate health score based on current readings
+
         healthScore = _calculateHealthScore(plant.currentHealth);
     }
-    
-    /**
-     * @dev Transfer plant ownership
-     * @param _plantId ID of the plant
-     * @param _newOwner Address of the new owner
-     */
-    function transferPlant(uint256 _plantId, address _newOwner) 
-        external 
-        onlyPlantOwner(_plantId) 
-        plantExists(_plantId) 
+
+    // Transfer plant
+    function transferPlant(uint256 _plantId, address _newOwner)
+        external
+        onlyPlantOwner(_plantId)
+        plantExists(_plantId)
     {
         require(_newOwner != address(0), "Invalid new owner address");
         require(_newOwner != msg.sender, "Cannot transfer to yourself");
-        
+
         address oldOwner = plants[_plantId].owner;
         plants[_plantId].owner = _newOwner;
-        
-        // Remove from old owner's list
+
         _removeFromOwnerList(oldOwner, _plantId);
-        
-        // Add to new owner's list
         ownerPlants[_newOwner].push(_plantId);
-        
+
         emit PlantTransferred(_plantId, oldOwner, _newOwner);
     }
-    
-    // Internal helper functions
+
+    // 🔹 NEW FUNCTION: Get latest health
+    /**
+     * @dev Get the latest health data for a specific plant
+     * @param _plantId ID of the plant
+     * @return latestHealth Latest recorded PlantHealth struct
+     */
+    function getLatestHealth(uint256 _plantId)
+        external
+        view
+        plantExists(_plantId)
+        returns (PlantHealth memory latestHealth)
+    {
+        latestHealth = plants[_plantId].currentHealth;
+    }
+
+    // Internal score logic
     function _calculateHealthScore(PlantHealth memory _health) internal pure returns (uint256) {
         if (_health.timestamp == 0) return 0;
-        
+
         uint256 score = 100;
-        
-        // Soil moisture scoring
+
         if (_health.soilMoisture < MIN_SOIL_MOISTURE || _health.soilMoisture > MAX_SOIL_MOISTURE) {
             score -= 20;
         }
-        
-        // Temperature scoring
+
         if (_health.temperature < MIN_TEMPERATURE || _health.temperature > MAX_TEMPERATURE) {
             score -= 20;
         }
-        
-        // Humidity scoring
+
         if (_health.humidity < MIN_HUMIDITY || _health.humidity > MAX_HUMIDITY) {
             score -= 15;
         }
-        
-        // pH scoring (optimal range 6.0-7.0)
+
         if (_health.phLevel < 600 || _health.phLevel > 700) {
             score -= 15;
         }
-        
-        // Light intensity scoring (basic check)
-        if (_health.lightIntensity < 1000) { // Minimum 1000 lux
+
+        if (_health.lightIntensity < 1000) {
             score -= 10;
         }
-        
+
         return score;
     }
-    
+
     function _checkHealthAlerts(uint256 _plantId, PlantHealth memory _health) internal {
-        // Soil moisture alerts
         if (_health.soilMoisture < MIN_SOIL_MOISTURE) {
             emit AlertTriggered(_plantId, "LOW_SOIL_MOISTURE", "Soil moisture is too low - watering needed");
         } else if (_health.soilMoisture > MAX_SOIL_MOISTURE) {
             emit AlertTriggered(_plantId, "HIGH_SOIL_MOISTURE", "Soil moisture is too high - reduce watering");
         }
-        
-        // Temperature alerts
+
         if (_health.temperature < MIN_TEMPERATURE) {
             emit AlertTriggered(_plantId, "LOW_TEMPERATURE", "Temperature is too low for optimal growth");
         } else if (_health.temperature > MAX_TEMPERATURE) {
             emit AlertTriggered(_plantId, "HIGH_TEMPERATURE", "Temperature is too high - provide shade or cooling");
         }
-        
-        // Humidity alerts
+
         if (_health.humidity < MIN_HUMIDITY) {
             emit AlertTriggered(_plantId, "LOW_HUMIDITY", "Humidity is too low - increase moisture in air");
         } else if (_health.humidity > MAX_HUMIDITY) {
             emit AlertTriggered(_plantId, "HIGH_HUMIDITY", "Humidity is too high - improve ventilation");
         }
     }
-    
+
     function _removeFromOwnerList(address _owner, uint256 _plantId) internal {
         uint256[] storage plantList = ownerPlants[_owner];
         for (uint256 i = 0; i < plantList.length; i++) {
@@ -294,32 +263,32 @@ contract PlantSentience {
             }
         }
     }
-    
+
     // View functions
     function getPlantsByOwner(address _owner) external view returns (uint256[] memory) {
         return ownerPlants[_owner];
     }
-    
-    function getPlantHealthHistory(uint256 _plantId, uint256 _limit) 
-        external 
-        view 
-        plantExists(_plantId) 
-        returns (PlantHealth[] memory) 
+
+    function getPlantHealthHistory(uint256 _plantId, uint256 _limit)
+        external
+        view
+        plantExists(_plantId)
+        returns (PlantHealth[] memory)
     {
         PlantHealth[] memory history = healthHistory[_plantId];
         uint256 length = history.length;
-        
+
         if (_limit == 0 || _limit > length) {
             _limit = length;
         }
-        
+
         PlantHealth[] memory result = new PlantHealth[](_limit);
         uint256 startIndex = length - _limit;
-        
+
         for (uint256 i = 0; i < _limit; i++) {
             result[i] = history[startIndex + i];
         }
-        
+
         return result;
     }
 }
